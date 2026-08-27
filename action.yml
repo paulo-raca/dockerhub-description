@@ -3,28 +3,44 @@ author: 'Peter Evans'
 description: 'An action to update a Docker Hub repository description from README.md'
 inputs:
   username:
-    description: Docker Hub username
-    required: true
+    description: >
+      Docker Hub username. Falls back to `DOCKERHUB_USERNAME` /
+      `DOCKER_USERNAME` env vars. If both `username` and `password`
+      remain unset after those, both are read together from
+      `~/.docker/config.json` (populated by `docker login` /
+      `docker/login-action`).
+    required: false
   password:
-    description: Docker Hub password or Personal Access Token with read/write/delete scope
-    required: true
+    description: >
+      Docker Hub password or Personal Access Token with read/write/delete
+      scope. Falls back to `DOCKERHUB_PASSWORD` / `DOCKER_PASSWORD` env
+      vars. If both `username` and `password` remain unset after those,
+      both are read together from `~/.docker/config.json`.
+    required: false
   repository:
     description: >
       Docker Hub repository in the format `<namespace>/<name>`
       Default: `github.repository`
   short-description:
-    description: Docker Hub repository short description
+    description: >
+      Docker Hub repository short description. Falls back to a
+      `short-description` field in the readme's YAML frontmatter, when
+      present.
   readme-filepath:
     description: >
       Path to the repository readme
       Default: `./README.md`
   enable-url-completion:
     description: >
-      Enables completion of relative URLs to absolute ones
+      Enables completion of relative URLs to absolute ones. Falls back
+      to an `enable-url-completion` field in the readme's YAML
+      frontmatter, when present.
       Default: `false`
   image-extensions:
     description: >
-      File extensions that will be treated as images
+      File extensions that will be treated as images. Falls back to
+      an `image-extensions` field in the readme's YAML frontmatter,
+      when present.
       Default: `bmp,gif,jpg,jpeg,png,svg,webp`
 runs:
   using: 'node24'

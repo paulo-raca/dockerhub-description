@@ -1,0 +1,104 @@
+name: E2E — docker-config credentials + readme frontmatter
+
+# End-to-end check for the two fallback paths added on top of the
+# upstream action:
+#
+#   1. Credential fallback (feat/docker-config-fallback):
+#      `docker/login-action` populates `~/.docker/config.json`, and
+#      the action is invoked with no `username` / `password` inputs.
+#      It must discover the credentials there.
+#
+#   2. Readme frontmatter (feat/frontmatter):
+#      `short-description` is set via a YAML frontmatter block on the
+#      README rather than an action input. The action must parse it,
+#      strip the block from the uploaded body, and PATCH the short
+#      description to the value from frontmatter.
+#
+# Target repo `paulocosta56/description-test` is a personal throwaway
+# used for verifying this flow. Its description is overwritten on every
+# run; the assertion step reads it back via the anonymous Docker Hub
+# API and confirms both the round-trip marker AND that the raw
+# `---` frontmatter block does not leak into `full_description`.
+
+on:
+  pull_request:
+    paths:
+      - 'src/**'
+      - 'action.yml'
+      - 'dist/**'
+      - '.github/workflows/test-docker-config-fallback.yml'
+  push:
+    branches: [main]
+  workflow_dispatch: {}
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  fallback-e2e:
+    runs-on: ubuntu-latest
+    env:
+      DH_REPO: paulocosta56/description-test
+      MARKER: run-${{ github.run_id }}-${{ github.run_attempt }}
+    steps:
+      - uses: actions/checkout@v7
+
+      # Cache-populates ~/.docker/config.json with paulocosta56's PAT.
+      # The action step below must then discover the credentials there
+      # rather than being handed them as inputs.
+      - name: Log in to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      # The README carries `short-description` in its frontmatter — the
+      # action step below deliberately doesn't pass that input, so the
+      # frontmatter fallback is the only source. The body contains a
+      # marker string that must round-trip into `full_description`, and
+      # the frontmatter block itself must NOT survive into the upload.
+      - name: Write a distinctive README for this run
+        run: |
+          cat > README.test.md <<MD
+          ---
+          short-description: e2e (${MARKER})
+          ---
+
+          # docker-config + frontmatter e2e
+
+          This description is set by CI as a round-trip check for the
+          docker-config credential fallback and the readme-frontmatter
+          fallback. See the run at
+          <https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}>.
+
+          Marker: ${MARKER}
+          MD
+
+      # Note: no `username` / `password` inputs (docker-config fallback
+      # must supply them), and no `short-description` input (readme
+      # frontmatter must supply it).
+      - name: Update the Docker Hub description (fallback paths)
+        uses: ./
+        with:
+          repository: ${{ env.DH_REPO }}
+          readme-filepath: ./README.test.md
+
+      - name: Read the description back and confirm the round-trip
+        run: |
+          set -euo pipefail
+          resp=$(curl -sSf "https://hub.docker.com/v2/repositories/${DH_REPO}/")
+          short=$(jq -r .description <<< "$resp")
+          full=$(jq -r .full_description <<< "$resp")
+          echo "short-description: ${short}"
+          echo "$short" | grep -qF "${MARKER}" \
+            || { echo "::error::short-description missing the run marker — frontmatter fallback did not apply"; exit 1; }
+          echo "$full" | grep -qF "${MARKER}" \
+            || { echo "::error::full description missing the run marker — body was not uploaded"; exit 1; }
+          # The `---` frontmatter block must be stripped from what we
+          # upload. If it survives, the parser or content-generation
+          # regressed.
+          if echo "$full" | grep -qE '^\s*short-description:'; then
+            echo "::error::full description contains raw frontmatter key — strip regressed"
+            exit 1
+          fi
